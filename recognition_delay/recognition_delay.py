@@ -31,9 +31,6 @@ class DelayGenerator(Node):
         
         output_msg = self._convert_object_array_to_detected_objects(object_array)
 
-        # for object in object_array.objects:
-        #     self.get_logger().info(str(object.LASSIFICATION_UNKNOWN))  # ログ出力に変更
-
         self.autoware_objects_pub.publish(output_msg)
     
     def _decide_autoware_existence_probability_from_object(self, object: Object) -> float:
@@ -83,6 +80,31 @@ class DelayGenerator(Node):
 
     def _decide_autoware_detected_object_kinematics_from_object(self, object: Object) -> DetectedObjectKinematics:
         autoware_kinematics = DetectedObjectKinematics()
+        
+        # covarianceはもともとのobjectに含まれていないのでFalse
+        autoware_kinematics.has_position_covariance = False
+        autoware_kinematics.has_twist_covariance = False
+        
+        # twist情報の有無
+        if object.twist:
+            autoware_kinematics.has_twist = True
+        else:
+            autoware_kinematics.has_twist = False
+        
+        # Only position is available, orientation is empty. Note that the shape can be an oriented
+        # ounding box but the direction the object is facing is unknown, in which case
+        # orientation should be empty.
+        if (object.pose.position) and (not object.pose.orientation):
+            autoware_kinematics.orientation_availability = DetectedObjectKinematics.UNAVAILABL
+        # The full orientation is available. Use e.g. for machine-learning models that can
+        # differentiate between the front and back of a vehicle.
+        elif object.pose.position and object.pose.orientation:
+            autoware_kinematics.orientation_availability = DetectedObjectKinematics.AVAILABLE
+        
+        # pose (covarianceないので省略)
+        autoware_kinematics.pose_with_covariance.pose = object.pose
+        # twist (covarianceないので省略)
+        autoware_kinematics.twist_with_covariance.twist = object.twist
         
         return autoware_kinematics
     
