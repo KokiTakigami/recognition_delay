@@ -1,5 +1,7 @@
 # recognition_delay
 
+**参考程度にしてください。**  
+
 ## Prerequisite
 
 [carla-ros-bridge/docker/](https://github.com/carla-simulator/ros-bridge/tree/master/docker)配下のfileを以下のように書き換えてください。  
