@@ -5,6 +5,7 @@ import threading
 import rclpy
 from rclpy.node import Node
 from derived_object_msgs.msg import ObjectArray, Object
+from shape_msgs.msg import SolidPrimitive
 from autoware_auto_perception_msgs.msg import DetectedObjects, DetectedObject, ObjectClassification, DetectedObjectKinematics, Shape
 
 
@@ -68,9 +69,12 @@ class DelayGenerator(Node):
                 autoware_classification.label = ObjectClassification.MOTORCYCLE
             elif object.classification == Object.CLASSIFICATION_OTHER_VEHICLE:
                 autoware_classification.label = ObjectClassification.BUS
-            elif object.classification == Object.CLASSIFICATION_BARRIER:
-                autoware_classification.label = ObjectClassification.UNKOWN
-            elif object.classification == Object.CLASSIFICATION_SIGN:
+            # BARRIERとSIGNに対応するautoware側のmsgはないのでUNKNOWを割り当てる
+            # TODO : SIGNについてはautowareの別のtopicにpublishするべきかもしれない
+            elif object.classification in [
+                Object.CLASSIFICATION_BARRIER,
+                Object.CLASSIFICATION_SIGN
+                ]:
                 autoware_classification.label = ObjectClassification.UNKOWN
             
             autoware_classification.probability = object.classification_certainty / 255
@@ -84,6 +88,26 @@ class DelayGenerator(Node):
     
     def _decide_autoware_shape_from_object(self, object: Object) -> Shape:
         autoware_shape = Shape()
+        
+        # type(uint8)
+        if object.shape.type == SolidPrimitive.BOX:
+            autoware_shape.type = Shape.BOUNDING_BOX
+        elif object.shape.type == SolidPrimitive.CYLINDER:
+            autoware_shape.type = Shape.CYLINDER
+        # SPHERE, CONE に対応するautoware側のmsgはないのでPOLYGON(多角形)を割り当てる
+        elif object.shape.type in [
+            SolidPrimitive.SPHERE,
+            SolidPrimitive.CONE
+            ] :
+            autoware_shape.type = Shape.POLYGON
+        
+        # footprint(geometry_msgs::msg::Polygon)
+        autoware_shape.footprint = object.polygon
+        
+        # dimensions (geometry_msgs::msg::Vector3)
+        autoware_shape.dimensions.x = object.shape.dimensions[0]
+        autoware_shape.dimensions.y = object.shape.dimensions[1]
+        autoware_shape.dimensions.z = object.shape.dimensions[2]
         
         return autoware_shape
     
