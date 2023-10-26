@@ -2,6 +2,8 @@
 
 import time
 import threading
+import math
+import copy
 import rclpy
 from rclpy.node import Node
 from derived_object_msgs.msg import ObjectArray, Object
@@ -104,7 +106,28 @@ class DelayGenerator(Node):
         # pose (covarianceないので省略)
         autoware_kinematics.pose_with_covariance.pose = object.pose
         # twist (covarianceないので省略)
-        autoware_kinematics.twist_with_covariance.twist = object.twist
+        print("origin:", object.twist.linear, )
+        
+        radian = math.atan2(object.twist.linear.y, object.twist.linear.x)
+        
+        magnitude = math.sqrt(object.twist.linear.y**2 + object.twist.linear.x**2)
+        convert_radian = radian/36
+        print("radian:[deg] ", math.degrees(radian), " mag: ", magnitude)
+        # print("convert_radian[deg]: ", math.degrees(convert_radian))
+        convert_x = magnitude * math.cos(convert_radian)
+        convert_y = magnitude * math.sin(convert_radian)
+        convert_twist = copy.copy(object.twist)
+        convert_twist.linear.x = convert_x
+        convert_twist.linear.y = convert_y
+
+        convert_twist.linear.x = object.twist.linear.x
+        convert_twist.linear.y = object.twist.linear.y
+
+        # convert_twist[1] = convert_twist[1]
+        
+        # print("converted: ", convert_twist.linear)
+
+        autoware_kinematics.twist_with_covariance.twist = convert_twist
         
         return autoware_kinematics
     
@@ -164,7 +187,7 @@ def main(args=None):
     rclpy.init(args=args)
 
     role_name = 'ego_vehicle'
-    delay_time = 0.1
+    delay_time = 5
     delay_generator = DelayGenerator(role_name, delay_time)
 
     try:
