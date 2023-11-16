@@ -17,8 +17,12 @@ class DelayGenerator(Node):
         super().__init__('recognition_delay')
         self.carla_objects_sub = self.create_subscription(
             ObjectArray, f"/carla/{role_name}/objects", self._objects_updated, 10)
+        # self.autoware_objects_pub = self.create_publisher(
+        #     DetectedObjects, "/lidar_center_point/output/objects", 
+        #     rclpy.qos.QoSProfile(depth=1)
+        #     )
         self.autoware_objects_pub = self.create_publisher(
-            DetectedObjects, "/lidar_center_point/output/objects", 
+            DetectedObjects, "/perception/object_recognition/detection/objects", 
             rclpy.qos.QoSProfile(depth=1)
             )
         self._role_name = role_name
@@ -106,13 +110,14 @@ class DelayGenerator(Node):
         # pose (covarianceないので省略)
         autoware_kinematics.pose_with_covariance.pose = object.pose
         # twist (covarianceないので省略)
-        print("origin:", object.twist.linear, )
+        # print("origin:", object.twist.linear, )
         
         radian = math.atan2(object.twist.linear.y, object.twist.linear.x)
         
         magnitude = math.sqrt(object.twist.linear.y**2 + object.twist.linear.x**2)
-        convert_radian = radian/36
-        print("radian:[deg] ", math.degrees(radian), " mag: ", magnitude)
+        # ここで角度合わせ
+        convert_radian = radian/360
+        # print("radian:[deg] ", math.degrees(radian), " mag: ", magnitude)
         # print("convert_radian[deg]: ", math.degrees(convert_radian))
         convert_x = magnitude * math.cos(convert_radian)
         convert_y = magnitude * math.sin(convert_radian)
@@ -159,6 +164,9 @@ class DelayGenerator(Node):
     def _convert_object_array_to_detected_objects(self, object_array: ObjectArray) -> DetectedObjects:
         detected_objects = DetectedObjects()
         detected_objects.header = object_array.header
+        # detected_objects.header.stamp = rclpy.clock.Clock().now().to_msg()
+        # detected_objects.header.frame_id = "base_link"
+        print(detected_objects.header)
         
         for object in object_array.objects:
             detected_object = DetectedObject()
