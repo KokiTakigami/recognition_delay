@@ -17,6 +17,8 @@ class DelayGenerator(Node):
         super().__init__('recognition_delay')
         self.carla_objects_sub = self.create_subscription(
             ObjectArray, f"/carla/{role_name}/objects", self._objects_updated, 10)
+        self.dummy_objects_sub = self.create_subscription(
+            DetectedObjects, "/perception/object_recognition/detection/objects", self._autoware_objects_updated, 10)
         # self.autoware_objects_pub = self.create_publisher(
         #     DetectedObjects, "/lidar_center_point/output/objects", 
         #     rclpy.qos.QoSProfile(depth=1)
@@ -27,6 +29,11 @@ class DelayGenerator(Node):
             )
         self._role_name = role_name
         self.delay_time = delay_time    # [seconds]
+        self._current_objects = None
+    
+    def _autoware_objects_updated(self, object_array):
+        self._current_objects = object_array
+        print("sub ", type(self._current_objects))
     
     def _objects_updated(self, object_array):
         t = threading.Thread(target=self.publish_delay_objects, args=(object_array,))
@@ -35,8 +42,23 @@ class DelayGenerator(Node):
     def publish_delay_objects(self, object_array):
         time.sleep(self.delay_time)
         
-        output_msg = self._convert_object_array_to_detected_objects(object_array)
+        converted_msg = self._convert_object_array_to_detected_objects(object_array)
 
+        if self._current_objects:
+            print("extend ", type(self._current_objects))
+            self._current_objects.objects.extend(converted_msg.objects)
+            output_msg = self._current_objects
+            if output_msg.header.frame_id != "map":
+                output_msg.header.frame_id = "map"
+
+        else:
+            print("convert")
+            output_msg = converted_msg
+        
+        print("pub ", type(output_msg))
+
+        self._delay_objects = converted_msg
+        
         self.autoware_objects_pub.publish(output_msg)
     
     def _decide_autoware_existence_probability_from_object(self, object: Object) -> float:
@@ -166,7 +188,7 @@ class DelayGenerator(Node):
         detected_objects.header = object_array.header
         # detected_objects.header.stamp = rclpy.clock.Clock().now().to_msg()
         # detected_objects.header.frame_id = "base_link"
-        print(detected_objects.header)
+        # print(detected_objects.header)
         
         for object in object_array.objects:
             detected_object = DetectedObject()
@@ -195,7 +217,7 @@ def main(args=None):
     rclpy.init(args=args)
 
     role_name = 'ego_vehicle'
-    delay_time = 5
+    delay_time = 0
     delay_generator = DelayGenerator(role_name, delay_time)
 
     try:
