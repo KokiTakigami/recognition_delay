@@ -3,6 +3,7 @@
 import time
 import threading
 import math
+import numpy as np
 import copy
 import rclpy
 from rclpy.node import Node
@@ -18,9 +19,9 @@ class DelayGenerator(Node):
         self.carla_objects_sub = self.create_subscription(
             ObjectArray, f"/carla/{role_name}/objects", self._objects_updated, 10)
         self.dummy_objects_sub = self.create_subscription(
-            DetectedObjects, "/perception/object_recognition/detection/objects", self._autoware_objects_updated, 10)
+            DetectedObjects, "/perception/object_recognition/detection/objects/ontime", self._autoware_objects_updated, 10)
         # self.autoware_objects_pub = self.create_publisher(
-        #     DetectedObjects, "/lidar_center_point/output/objects", 
+        #     DetectedObjects, "/lidar_center_position/output/objects", 
         #     rclpy.qos.QoSProfile(depth=1)
         #     )
         self.autoware_objects_pub = self.create_publisher(
@@ -33,7 +34,7 @@ class DelayGenerator(Node):
     
     def _autoware_objects_updated(self, object_array):
         self._current_objects = object_array
-        print("sub ", type(self._current_objects))
+        #pint("sub ", type(self._current_objects))
     
     def _objects_updated(self, object_array):
         t = threading.Thread(target=self.publish_delay_objects, args=(object_array,))
@@ -45,17 +46,17 @@ class DelayGenerator(Node):
         converted_msg = self._convert_object_array_to_detected_objects(object_array)
 
         if self._current_objects:
-            print("extend ", type(self._current_objects))
+            # print("extend ", type(self._current_objects))
             self._current_objects.objects.extend(converted_msg.objects)
             output_msg = self._current_objects
             if output_msg.header.frame_id != "map":
                 output_msg.header.frame_id = "map"
 
         else:
-            print("convert")
+            # print("convert")
             output_msg = converted_msg
         
-        print("pub ", type(output_msg))
+        # print("pub ", type(output_msg))
 
         self._delay_objects = converted_msg
         
@@ -129,10 +130,16 @@ class DelayGenerator(Node):
         elif object.pose.position and object.pose.orientation:
             autoware_kinematics.orientation_availability = DetectedObjectKinematics.AVAILABLE
         
-        # pose (covarianceないので省略)
+        # pose (covarianceないので省略)、正規分布に基づいてrandom性を加える
+        print(object.pose)
+        current_position = [object.pose.position.x, object.pose.position.y, object.pose.position.z]
+        rand_position = self.add_normal_randomness_to_position(current_position, mean=0, std_dev=1)
+        object.pose.position.x = rand_position[0]
+        object.pose.position.y = rand_position[1]
+        object.pose.position.z = rand_position[2]
+        print(autoware_kinematics.pose_with_covariance.pose.position)
         autoware_kinematics.pose_with_covariance.pose = object.pose
         # twist (covarianceないので省略)
-        # print("origin:", object.twist.linear, )
         
         radian = math.atan2(object.twist.linear.y, object.twist.linear.x)
         
@@ -208,6 +215,12 @@ class DelayGenerator(Node):
             detected_objects.objects.append(detected_object)
         
         return detected_objects
+
+    def add_normal_randomness_to_position(self, position:list, mean:float=0, std_dev:float=1) -> list:
+        # 正規分布に従う乱数を生成し、元の位置情報に加える
+        random_offsets = np.random.normal(mean, std_dev, size=len(position))
+        new_position = [p + offset for p, offset in zip(position, random_offsets)]
+        return new_position
     
     def set_delay_time(self, delay_time):
         self.delay_time = delay_time
