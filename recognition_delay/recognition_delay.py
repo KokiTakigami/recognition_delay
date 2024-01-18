@@ -14,27 +14,35 @@ from autoware_auto_perception_msgs.msg import DetectedObjects, DetectedObject, O
 
 
 class DelayGenerator(Node):
-    def __init__(self, role_name, delay_time):
+    def __init__(self, role_name:str, delay_time:float, rand_pos_mean:float, rand_pos_std:float):
         super().__init__('recognition_delay')
+        # self.declare_parameter('t_delay', 1)
+        # self.declare_parameter('role_name')
         self.carla_objects_sub = self.create_subscription(
             ObjectArray, f"/carla/{role_name}/objects", self._objects_updated, 10)
         self.dummy_objects_sub = self.create_subscription(
             DetectedObjects, "/perception/object_recognition/detection/objects/ontime", self._autoware_objects_updated, 10)
-        # self.autoware_objects_pub = self.create_publisher(
-        #     DetectedObjects, "/lidar_center_position/output/objects", 
-        #     rclpy.qos.QoSProfile(depth=1)
-        #     )
+
         self.autoware_objects_pub = self.create_publisher(
             DetectedObjects, "/perception/object_recognition/detection/objects", 
             rclpy.qos.QoSProfile(depth=1)
             )
+        # self.autoware_objects_pub = self.create_publisher(
+        #     DetectedObjects, "/lidar_center_point/output/objects", 
+        #     rclpy.qos.QoSProfile(depth=1)
+        #     )
         self._role_name = role_name
         self.delay_time = delay_time    # [seconds]
-        self._current_objects = None
-    
+        self.rand_pos_mean = rand_pos_mean
+        self.rand_pos_std = rand_pos_std
+        self._delay_objects = DetectedObjects()
+
+
     def _autoware_objects_updated(self, object_array):
-        self._current_objects = object_array
-        #pint("sub ", type(self._current_objects))
+        object_array.objects.extend(self._delay_objects.objects)
+        if object_array.header.frame_id != "map":
+            object_array.header.frame_id = "map"
+        self.autoware_objects_pub.publish(object_array)
     
     def _objects_updated(self, object_array):
         t = threading.Thread(target=self.publish_delay_objects, args=(object_array,))
@@ -42,34 +50,12 @@ class DelayGenerator(Node):
     
     def publish_delay_objects(self, object_array):
         time.sleep(self.delay_time)
-        
         converted_msg = self._convert_object_array_to_detected_objects(object_array)
-
-        if self._current_objects:
-            # print("extend ", type(self._current_objects))
-            self._current_objects.objects.extend(converted_msg.objects)
-            output_msg = self._current_objects
-            if output_msg.header.frame_id != "map":
-                output_msg.header.frame_id = "map"
-
-        else:
-            # print("convert")
-            output_msg = converted_msg
-        
-        # print("pub ", type(output_msg))
-
         self._delay_objects = converted_msg
-        
-        self.autoware_objects_pub.publish(output_msg)
     
     def _decide_autoware_existence_probability_from_object(self, object: Object) -> float:
-        # object側のdetection_levelが検知(DETECTED)なら確率を低めに、追跡(TRACKED)なら確率を高めにする
         # range (min=0.0, max=1.0)
-        autoware_existence_probability = float()
-        if object.detection_level == Object.OBJECT_DETECTED:
-            autoware_existence_probability = 0.5
-        elif object.detection_level == Object.OBJECT_TRACKED:
-            autoware_existence_probability = 1.0
+        autoware_existence_probability = 0.0
         
         return autoware_existence_probability
       
@@ -103,7 +89,7 @@ class DelayGenerator(Node):
                 ]:
                 autoware_classification.label = ObjectClassification.UNKOWN
             
-            autoware_classification.probability = object.classification_certainty / 255
+            autoware_classification.probability = 1.0
 
         return autoware_classification
 
@@ -115,29 +101,16 @@ class DelayGenerator(Node):
         autoware_kinematics.has_twist_covariance = False
         
         # twist情報の有無
-        if object.twist:
-            autoware_kinematics.has_twist = True
-        else:
-            autoware_kinematics.has_twist = False
-        
-        # Only position is available, orientation is empty. Note that the shape can be an oriented
-        # ounding box but the direction the object is facing is unknown, in which case
-        # orientation should be empty.
-        if (object.pose.position) and (not object.pose.orientation):
-            autoware_kinematics.orientation_availability = DetectedObjectKinematics.UNAVAILABL
-        # The full orientation is available. Use e.g. for machine-learning models that can
-        # differentiate between the front and back of a vehicle.
-        elif object.pose.position and object.pose.orientation:
-            autoware_kinematics.orientation_availability = DetectedObjectKinematics.AVAILABLE
+        autoware_kinematics.has_twist = False
+
+        autoware_kinematics.orientation_availability = DetectedObjectKinematics.UNAVAILABLE
         
         # pose (covarianceないので省略)、正規分布に基づいてrandom性を加える
-        print(object.pose)
         current_position = [object.pose.position.x, object.pose.position.y, object.pose.position.z]
-        rand_position = self.add_normal_randomness_to_position(current_position, mean=0, std_dev=1)
+        rand_position = self.add_normal_randomness_to_position(current_position, mean=self.rand_pos_mean, std=self.rand_pos_std)
         object.pose.position.x = rand_position[0]
         object.pose.position.y = rand_position[1]
         object.pose.position.z = rand_position[2]
-        print(autoware_kinematics.pose_with_covariance.pose.position)
         autoware_kinematics.pose_with_covariance.pose = object.pose
         # twist (covarianceないので省略)
         
@@ -146,22 +119,26 @@ class DelayGenerator(Node):
         magnitude = math.sqrt(object.twist.linear.y**2 + object.twist.linear.x**2)
         # ここで角度合わせ
         convert_radian = radian/360
-        # print("radian:[deg] ", math.degrees(radian), " mag: ", magnitude)
-        # print("convert_radian[deg]: ", math.degrees(convert_radian))
         convert_x = magnitude * math.cos(convert_radian)
         convert_y = magnitude * math.sin(convert_radian)
         convert_twist = copy.copy(object.twist)
         convert_twist.linear.x = convert_x
         convert_twist.linear.y = convert_y
 
-        convert_twist.linear.x = object.twist.linear.x
-        convert_twist.linear.y = object.twist.linear.y
-
-        # convert_twist[1] = convert_twist[1]
-        
-        # print("converted: ", convert_twist.linear)
+        # convert_twist.linear.x = object.twist.linear.x
+        # convert_twist.linear.y = object.twist.linear.y
 
         autoware_kinematics.twist_with_covariance.twist = convert_twist
+
+        ##dummy carと合わせてみる
+        # autoware_kinematics.twist_with_covariance.twist.linear.x = 3.0
+        # autoware_kinematics.twist_with_covariance.twist.linear.y = 0.0
+        # autoware_kinematics.twist_with_covariance.twist.linear.z = 0.0
+
+        # autoware_kinematics.twist_with_covariance.twist.angular.x = 0.0
+        # autoware_kinematics.twist_with_covariance.twist.angular.y = 0.0
+        # autoware_kinematics.twist_with_covariance.twist.angular.z = 0.0
+
         
         return autoware_kinematics
     
@@ -193,9 +170,7 @@ class DelayGenerator(Node):
     def _convert_object_array_to_detected_objects(self, object_array: ObjectArray) -> DetectedObjects:
         detected_objects = DetectedObjects()
         detected_objects.header = object_array.header
-        # detected_objects.header.stamp = rclpy.clock.Clock().now().to_msg()
-        # detected_objects.header.frame_id = "base_link"
-        # print(detected_objects.header)
+
         
         for object in object_array.objects:
             detected_object = DetectedObject()
@@ -214,11 +189,13 @@ class DelayGenerator(Node):
             
             detected_objects.objects.append(detected_object)
         
+        detected_objects.header.stamp = self.get_clock().now().to_msg()
+
         return detected_objects
 
-    def add_normal_randomness_to_position(self, position:list, mean:float=0, std_dev:float=1) -> list:
+    def add_normal_randomness_to_position(self, position:list, mean:float=0, std:float=1) -> list:
         # 正規分布に従う乱数を生成し、元の位置情報に加える
-        random_offsets = np.random.normal(mean, std_dev, size=len(position))
+        random_offsets = np.random.normal(mean, std, size=len(position))
         new_position = [p + offset for p, offset in zip(position, random_offsets)]
         return new_position
     
@@ -230,8 +207,10 @@ def main(args=None):
     rclpy.init(args=args)
 
     role_name = 'ego_vehicle'
-    delay_time = 0
-    delay_generator = DelayGenerator(role_name, delay_time)
+    delay_time = 0.0
+    rand_pos_mean = 0.0
+    rand_pos_std = 0.0
+    delay_generator = DelayGenerator(role_name, delay_time, rand_pos_mean, rand_pos_std)
 
     try:
         rclpy.spin(delay_generator)
